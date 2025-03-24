@@ -304,7 +304,7 @@ def main():
 
     # Footer
     st.markdown("---")
-    st.markdown("Powered by Google Gemini | Developed for Customer Deployment")
+    st.markdown("Powered by Google Gemini | Developed for Wissend")
 
 if __name__ == "__main__":
     main()
