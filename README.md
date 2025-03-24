@@ -1,0 +1,1 @@
+# wic-pdf-img-bot
