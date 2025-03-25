@@ -131,15 +131,14 @@ def get_conversation_chain(api_key=None):
             raise ValueError("API key is required for conversation chain.")
         
         prompt_template = """
-        Answer the question with the most relevant and useful information available. If the answer is found in the provided context, ensure all key details are included.
+        Answer the question as detailed as possible from the provided context, ensuring all relevant details are included. 
+        If the answer is not in the provided context, attempt to provide a general answer based on common knowledge, but clearly state that the information is not directly from the context. If no relevant information can be provided, state, "answer is not available in the context," and avoid providing incorrect information.
 
-        If the exact answer is not in the context, provide a well-informed response based on general knowledge, without explicitly mentioning that the information is missing from the context. Instead, focus on delivering value by giving the best possible answer.
+        You are an AI assistant that extracts and structures product dimension data from technical drawings, including part diagrams and engineering schematics. However, if the user asks unrelated questions (e.g., about recipes or general knowledge), provide a helpful response based on general knowledge if possible.
 
-        You are an intelligent AI assistant skilled in extracting product dimensions from technical drawings and engineering schematics. However, you are also capable of answering a wide range of general knowledge questions to assist the user effectively.
-
-        **Context:** {context}  
-        **Question:** {question}
-        **Answer:**
+        Context: {context}
+        Question: {question}
+        Answer:
         """
         model = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash",
