@@ -4,7 +4,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import os
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import google.generativeai as genai
-from langchain_community.vectorstores import FAISS
+from langchain.vectorstores import FAISS
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains.question_answering import load_qa_chain
 from langchain.prompts import PromptTemplate
@@ -61,8 +61,11 @@ def get_image_text(image_file):
         return None
     try:
         img = Image.open(image_file)
+        # Resize image to reduce processing time
+        max_size = (800, 800)
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
         buffered = io.BytesIO()
-        img.save(buffered, format="PNG")
+        img.save(buffered, format="PNG", optimize=True)
         img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
         model = genai.GenerativeModel("gemini-1.5-flash")
@@ -87,7 +90,7 @@ def get_text_chunks(text):
     if not text:
         return []
     try:
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=1000)
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
         chunks = text_splitter.split_text(text)
         return chunks
     except Exception as e:
@@ -96,9 +99,16 @@ def get_text_chunks(text):
         return []
 
 # Function to create and save vector store
-def get_vector_store(text_chunks, ocr_text=None):
+def get_vector_store(text_chunks, ocr_text=None, api_key=None):
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        if not api_key:
+            raise ValueError("API key is required for embedding generation.")
+        
+        # Pass the API key explicitly to GoogleGenerativeAIEmbeddings
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=api_key
+        )
         all_texts = text_chunks
         if ocr_text:
             all_texts.append(ocr_text)
@@ -115,19 +125,27 @@ def get_vector_store(text_chunks, ocr_text=None):
         return False
 
 # Function to set up conversational chain
-def get_conversation_chain():
+def get_conversation_chain(api_key=None):
     try:
+        if not api_key:
+            raise ValueError("API key is required for conversation chain.")
+        
         prompt_template = """
-        Answer the question as detailed as possible from the provided context, ensuring all relevant details are included. 
-        If the answer is not in the provided context, attempt to provide a general answer based on common knowledge, but clearly state that the information is not directly from the context. If no relevant information can be provided, state, "answer is not available in the context," and avoid providing incorrect information.
+        Answer the question with the most relevant and useful information available. If the answer is found in the provided context, ensure all key details are included.
 
-        You are an AI assistant that extracts and structures product dimension data from technical drawings, including part diagrams and engineering schematics. However, if the user asks unrelated questions (e.g., about recipes or general knowledge), provide a helpful response based on general knowledge if possible.
+        If the exact answer is not in the context, provide a well-informed response based on general knowledge, without explicitly mentioning that the information is missing from the context. Instead, focus on delivering value by giving the best possible answer.
 
-        Context: {context}
-        Question: {question}
-        Answer:
+        You are an intelligent AI assistant skilled in extracting product dimensions from technical drawings and engineering schematics. However, you are also capable of answering a wide range of general knowledge questions to assist the user effectively.
+
+        **Context:** {context}  
+        **Question:** {question}
+        **Answer:**
         """
-        model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+        model = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            temperature=0.3,
+            google_api_key=api_key
+        )
         prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
         chain = load_qa_chain(model, chain_type="stuff", prompt=prompt)
         return chain
@@ -137,19 +155,22 @@ def get_conversation_chain():
         return None
 
 # Function to handle user questions and return answers
-def process_user_input(user_question):
+def process_user_input(user_question, api_key=None):
     try:
         if not os.path.exists("faiss_index"):
             return "No data has been processed yet. Please upload and process files first."
         
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=api_key
+        )
         logger.debug("Loading FAISS index...")
         new_db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
         logger.debug(f"Searching for documents with question: {user_question}")
-        docs = new_db.similarity_search(user_question)
+        docs = new_db.similarity_search(user_question, k=2)
         logger.debug(f"Found {len(docs)} documents.")
         
-        chain = get_conversation_chain()
+        chain = get_conversation_chain(api_key=api_key)
         if chain is None:
             return "Error: Unable to set up the conversation chain."
         response = chain(
@@ -201,6 +222,8 @@ def main():
         st.session_state.processed = False
     if "api_key_valid" not in st.session_state:
         st.session_state.api_key_valid = False
+    if "api_key" not in st.session_state:
+        st.session_state.api_key = None
 
     # API Key Input
     st.subheader("Configure API Key")
@@ -210,8 +233,10 @@ def main():
         if submit_api_key and api_key:
             if configure_api_key(api_key):
                 st.session_state.api_key_valid = True
+                st.session_state.api_key = api_key  # Store the API key in session state
             else:
                 st.session_state.api_key_valid = False
+                st.session_state.api_key = None
 
     # Proceed only if API key is valid
     if not st.session_state.api_key_valid:
@@ -241,7 +266,7 @@ def main():
 
         if image_file is not None:
             image = Image.open(image_file)
-            st.image(image, caption="Uploaded Image", use_column_width=True)
+            st.image(image, caption="Uploaded Image", use_container_width=True)
             st.session_state.uploaded_files["image"] = image_file
 
         if pdf_docs:
@@ -265,7 +290,7 @@ def main():
                         if ocr_text:
                             st.session_state['ocr_result'] = ocr_text
                     if text_chunks or ocr_text:
-                        if get_vector_store(text_chunks, ocr_text):
+                        if get_vector_store(text_chunks, ocr_text, api_key=st.session_state.api_key):
                             st.session_state.processed = True
                             st.success("Files processed successfully!")
                         else:
@@ -273,9 +298,9 @@ def main():
                     else:
                         st.error("No content processed. Please check your files.")
 
-    # Display extracted image content
+    # Display billing summary if available
     if 'ocr_result' in st.session_state:
-        st.markdown("### Extracted Image Content")
+        st.markdown("### Billing Summary")
         st.markdown(st.session_state['ocr_result'])
 
     # Chat interface
@@ -298,7 +323,7 @@ def main():
                 st.warning("Please process files before asking questions, unless seeking general knowledge.")
             else:
                 st.session_state.chat_history.append({"role": "user", "content": user_question})
-                response = process_user_input(user_question)
+                response = process_user_input(user_question, api_key=st.session_state.api_key)
                 st.session_state.chat_history.append({"role": "bot", "content": response})
                 st.rerun()
 
